@@ -43,18 +43,16 @@ class TestConfig(unittest.TestCase):
         except ImportError:
             pass  # YAML tests will be skipped if PyYAML not installed
 
-        # TOML config
+        # TOML config (written as string since tomllib/tomli are read-only)
         self.toml_config_path = os.path.join(self.temp_dir.name, 'config.toml')
-        try:
-            import toml
-            with open(self.toml_config_path, 'w') as f:
-                toml.dump(self.test_config_data, f)
-        except ImportError:
-            pass  # TOML tests will be skipped if toml not installed
+        with open(self.toml_config_path, 'w') as f:
+            f.write('[app]\ndebug = true\nport = 8080\n\n')
+            f.write('[database]\nhost = "localhost"\nuser = "user123"\npassword = "pass123"\n')
             
         # Clear environment variables that might interfere with tests
+        test_prefixes = ('APP_', 'DATABASE_', 'MYAPP_', 'PFX_', 'TESTPFX_')
         for env_var in list(os.environ.keys()):
-            if env_var.startswith('APP_') or env_var.startswith('DATABASE_'):
+            if env_var.startswith(test_prefixes):
                 del os.environ[env_var]
                 
     def tearDown(self) -> None:
@@ -147,10 +145,12 @@ class TestConfig(unittest.TestCase):
 
     def test_load_toml_config(self) -> None:
         """Test loading a TOML configuration file."""
-        try:
-            import toml
-        except ImportError:
-            self.skipTest("toml not installed")
+        import sys
+        if sys.version_info < (3, 11):
+            try:
+                import tomli  # noqa: F401
+            except ImportError:
+                self.skipTest("tomli not installed")
 
         config = Config(self.toml_config_path)
 
@@ -172,10 +172,12 @@ class TestConfig(unittest.TestCase):
 
     def test_toml_with_env_override(self) -> None:
         """Test TOML config with environment variable override."""
-        try:
-            import toml
-        except ImportError:
-            self.skipTest("toml not installed")
+        import sys
+        if sys.version_info < (3, 11):
+            try:
+                import tomli  # noqa: F401
+            except ImportError:
+                self.skipTest("tomli not installed")
 
         os.environ['DATABASE_HOST'] = 'toml.example.com'
         config = Config(self.toml_config_path)
@@ -368,19 +370,19 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.get('path.value.nested'), 'new')
 
     def test_getitem_with_none_value(self) -> None:
-        """Test that __getitem__ distinguishes between None and missing keys."""
-        null_data = {"existing": None}
+        """Test that __getitem__ returns None for existing keys with None value."""
+        null_data = {"existing": None, "nested": {"nullable": None}}
         null_path = os.path.join(self.temp_dir.name, 'null_getitem.json')
         with open(null_path, 'w') as f:
             json.dump(null_data, f)
 
         config = Config(null_path)
 
-        # Existing key with None value should raise KeyError
-        with self.assertRaises(KeyError):
-            _ = config['existing']
+        # Existing key with None value should return None, not raise
+        self.assertIsNone(config['existing'])
+        self.assertIsNone(config['nested.nullable'])
 
-        # Non-existing key should also raise KeyError
+        # Non-existing key should still raise KeyError
         with self.assertRaises(KeyError):
             _ = config['nonexistent']
 
@@ -467,19 +469,19 @@ class TestConfig(unittest.TestCase):
         with open(dotenv_path, 'w') as f:
             f.write('# This is a comment\n')
             f.write('\n')
-            f.write('DATABASE_HOST=localhost\n')
+            f.write('DATABASE_HOST=env-host\n')
             f.write('  \n')
             f.write('# Another comment\n')
-            f.write('DATABASE_PORT=5432\n')
+            f.write('DATABASE_PASSWORD=env-pass\n')
 
-        for key in ['DATABASE_HOST', 'DATABASE_PORT']:
+        for key in ['DATABASE_HOST', 'DATABASE_PASSWORD']:
             if key in os.environ:
                 del os.environ[key]
 
         config = Config(self.json_config_path, load_dotenv=True, dotenv_path=dotenv_path)
 
-        self.assertEqual(config.get('database.host'), 'localhost')
-        self.assertEqual(config.get('database.port'), 5432)
+        self.assertEqual(config.get('database.host'), 'env-host')
+        self.assertEqual(config.get('database.password'), 'env-pass')
 
     def test_dotenv_with_quoted_values(self) -> None:
         """Test .env file with quoted values."""
@@ -571,29 +573,32 @@ class TestConfig(unittest.TestCase):
             if yaml_module is not None:
                 sys.modules['yaml'] = yaml_module
 
-    def test_toml_load_error_without_toml(self) -> None:
-        """Test error handling when trying to load TOML without toml installed."""
+    def test_toml_load_error_without_tomli(self) -> None:
+        """Test error handling when trying to load TOML without tomli on Python < 3.11."""
         import sys
         import importlib
 
-        # Save original toml module
-        toml_module = sys.modules.get('toml')
+        if sys.version_info >= (3, 11):
+            self.skipTest("tomllib is always available on Python 3.11+")
+
+        # Save original tomli module
+        tomli_module = sys.modules.get('tomli')
 
         try:
-            # Remove toml from sys.modules
-            if 'toml' in sys.modules:
-                del sys.modules['toml']
+            # Remove tomli from sys.modules
+            if 'tomli' in sys.modules:
+                del sys.modules['tomli']
 
             # Create a TOML file
             toml_path = os.path.join(self.temp_dir.name, 'test.toml')
             with open(toml_path, 'w') as f:
                 f.write('[test]\nvalue = "data"\n')
 
-            # Mock importlib.util.find_spec to return None for toml
+            # Mock importlib.util.find_spec to return None for tomli
             original_find_spec = importlib.util.find_spec
 
             def mock_find_spec(name: str) -> None:
-                if name == 'toml':
+                if name == 'tomli':
                     return None
                 return original_find_spec(name)
 
@@ -602,13 +607,13 @@ class TestConfig(unittest.TestCase):
             # This should raise an ImportError
             with self.assertRaises(ValueError) as context:
                 Config(toml_path)
-            self.assertIn('toml is required', str(context.exception))
+            self.assertIn('tomli is required', str(context.exception))
 
         finally:
             # Restore
             importlib.util.find_spec = original_find_spec  # type: ignore[assignment]
-            if toml_module is not None:
-                sys.modules['toml'] = toml_module
+            if tomli_module is not None:
+                sys.modules['tomli'] = tomli_module
 
     def test_malformed_yaml_file(self) -> None:
         """Test handling of malformed YAML file."""
@@ -676,10 +681,11 @@ class TestConfig(unittest.TestCase):
         try:
             with self.assertRaises(ValueError) as context:
                 Config(self.json_config_path, load_dotenv=True, dotenv_path=dotenv_path)
-            # Check for either read or parse error (more specific now)
+            error_msg = str(context.exception)
             self.assertTrue(
-                'Error reading .env file' in str(context.exception) or
-                'Error parsing .env file' in str(context.exception)
+                'Error reading .env file' in error_msg or
+                'Error parsing .env file' in error_msg or
+                'Error loading .env file' in error_msg
             )
         finally:
             # Restore permissions for cleanup
@@ -687,6 +693,154 @@ class TestConfig(unittest.TestCase):
                 os_module.chmod(dotenv_path, 0o644)
             except:
                 pass
+
+
+    def test_double_underscore_produces_literal_underscore(self) -> None:
+        """Test that double underscore in env vars becomes a literal underscore in keys."""
+        data = {"my_key": "original"}
+        path = os.path.join(self.temp_dir.name, 'underscore.json')
+        with open(path, 'w') as f:
+            json.dump(data, f)
+
+        os.environ['TESTPFX_MY__KEY'] = 'overridden'
+        config = Config(path, env_prefix='TESTPFX_')
+        self.assertEqual(config.get('my_key'), 'overridden')
+        del os.environ['TESTPFX_MY__KEY']
+
+    def test_double_underscore_nesting_distinction(self) -> None:
+        """Test that single and double underscores produce different key paths."""
+        data = {
+            "database": {"host": "original_nested"},
+            "database_host": "original_flat"
+        }
+        path = os.path.join(self.temp_dir.name, 'distinction.json')
+        with open(path, 'w') as f:
+            json.dump(data, f)
+
+        # Single underscore -> nesting separator (database.host)
+        os.environ['PFX_DATABASE_HOST'] = 'nested_override'
+        config = Config(path, env_prefix='PFX_')
+        self.assertEqual(config.get('database.host'), 'nested_override')
+        # Flat key with underscore should remain unchanged
+        self.assertEqual(config.get('database_host'), 'original_flat')
+        del os.environ['PFX_DATABASE_HOST']
+
+        # Double underscore -> literal underscore (database_host)
+        os.environ['PFX_DATABASE__HOST'] = 'flat_override'
+        config = Config(path, env_prefix='PFX_')
+        self.assertEqual(config.get('database_host'), 'flat_override')
+        del os.environ['PFX_DATABASE__HOST']
+
+    def test_no_prefix_only_overrides_existing_keys(self) -> None:
+        """Test that without a prefix, only existing config keys are overridden."""
+        config = Config(self.json_config_path)
+
+        # System env vars like PATH, HOME should NOT appear in config
+        self.assertIsNone(config.get('path'))
+        self.assertIsNone(config.get('home'))
+        self.assertIsNone(config.get('user'))
+
+        # But existing keys should still be overridable
+        os.environ['APP_PORT'] = '7777'
+        config = Config(self.json_config_path)
+        self.assertEqual(config.get('app.port'), 7777)
+
+    def test_prefix_allows_new_keys(self) -> None:
+        """Test that with a prefix, new keys can be created from env vars."""
+        os.environ['MYAPP_BRAND_NEW_KEY'] = 'created'
+        config = Config(self.json_config_path, env_prefix='MYAPP_')
+        self.assertEqual(config.get('brand.new.key'), 'created')
+        del os.environ['MYAPP_BRAND_NEW_KEY']
+
+    def test_dotenv_builtin_fallback(self) -> None:
+        """Test the built-in .env parser when python-dotenv is not available."""
+        import importlib
+
+        dotenv_path = os.path.join(self.temp_dir.name, 'fallback.env')
+        with open(dotenv_path, 'w') as f:
+            f.write('# comment\n')
+            f.write('\n')
+            f.write('BUILTIN_TEST_KEY=builtin_value\n')
+            f.write('BUILTIN_QUOTED="quoted value"\n')
+            f.write("BUILTIN_SINGLE='single quoted'\n")
+
+        for key in ['BUILTIN_TEST_KEY', 'BUILTIN_QUOTED', 'BUILTIN_SINGLE']:
+            if key in os.environ:
+                del os.environ[key]
+
+        # Mock python-dotenv as unavailable
+        original_find_spec = importlib.util.find_spec
+
+        def mock_find_spec(name: str):
+            if name == 'dotenv':
+                return None
+            return original_find_spec(name)
+
+        importlib.util.find_spec = mock_find_spec  # type: ignore[assignment]
+
+        try:
+            Config(self.json_config_path, load_dotenv=True, dotenv_path=dotenv_path)
+            self.assertEqual(os.environ.get('BUILTIN_TEST_KEY'), 'builtin_value')
+            self.assertEqual(os.environ.get('BUILTIN_QUOTED'), 'quoted value')
+            self.assertEqual(os.environ.get('BUILTIN_SINGLE'), 'single quoted')
+        finally:
+            importlib.util.find_spec = original_find_spec  # type: ignore[assignment]
+            for key in ['BUILTIN_TEST_KEY', 'BUILTIN_QUOTED', 'BUILTIN_SINGLE']:
+                if key in os.environ:
+                    del os.environ[key]
+
+    def test_dotenv_builtin_read_error(self) -> None:
+        """Test the built-in .env parser error handling when file is unreadable."""
+        import importlib
+        import platform
+
+        if platform.system() == 'Windows':
+            self.skipTest("File permission tests don't work on Windows")
+
+        dotenv_path = os.path.join(self.temp_dir.name, 'unreadable.env')
+        with open(dotenv_path, 'w') as f:
+            f.write('TEST=value\n')
+        os.chmod(dotenv_path, 0o000)
+
+        # Mock python-dotenv as unavailable to hit the built-in path
+        original_find_spec = importlib.util.find_spec
+
+        def mock_find_spec(name: str):
+            if name == 'dotenv':
+                return None
+            return original_find_spec(name)
+
+        importlib.util.find_spec = mock_find_spec  # type: ignore[assignment]
+
+        try:
+            with self.assertRaises(ValueError) as context:
+                Config(self.json_config_path, load_dotenv=True, dotenv_path=dotenv_path)
+            self.assertIn('Error reading .env file', str(context.exception))
+        finally:
+            importlib.util.find_spec = original_find_spec  # type: ignore[assignment]
+            try:
+                os.chmod(dotenv_path, 0o644)
+            except OSError:
+                pass
+
+    def test_dotenv_uses_python_dotenv_when_available(self) -> None:
+        """Test that python-dotenv is preferred when available."""
+        import importlib
+        if importlib.util.find_spec("dotenv") is None:
+            self.skipTest("python-dotenv not installed")
+
+        # python-dotenv supports export prefix
+        dotenv_path = os.path.join(self.temp_dir.name, 'export.env')
+        with open(dotenv_path, 'w') as f:
+            f.write('export PDOTENV_TEST_VAR=from_python_dotenv\n')
+
+        if 'PDOTENV_TEST_VAR' in os.environ:
+            del os.environ['PDOTENV_TEST_VAR']
+
+        Config(self.json_config_path, load_dotenv=True, dotenv_path=dotenv_path)
+        self.assertEqual(os.environ.get('PDOTENV_TEST_VAR'), 'from_python_dotenv')
+
+        del os.environ['PDOTENV_TEST_VAR']
 
 
 if __name__ == '__main__':

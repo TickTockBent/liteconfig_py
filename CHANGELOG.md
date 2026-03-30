@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-30
+
+### Changed
+- **Breaking:** Double underscore (`__`) in environment variables now produces a literal underscore in the config key instead of a dot. Single underscore (`_`) remains the nesting separator. E.g. `MY__KEY` -> `my_key`, `DATABASE_HOST` -> `database.host`.
+- **Breaking:** Without `env_prefix`, only environment variables matching keys that already exist in the loaded config are applied. This prevents system variables (`PATH`, `HOME`, etc.) from polluting the config tree. Set `env_prefix` to allow creating new keys from env vars.
+- **Breaking:** `__getitem__` (`config['key']`) now returns `None` for keys that exist with a `None` value, instead of raising `KeyError`. `KeyError` is only raised for truly missing keys.
+- Replaced unmaintained `toml` package with stdlib `tomllib` (Python 3.11+) / `tomli` (Python 3.8-3.10).
+- `.env` file loading now uses `python-dotenv` when installed (supports multiline values, variable interpolation, `export` prefixes), falling back to the built-in parser.
+
+### Added
+- `python-dotenv` as an optional dependency (`pip install liteconfig_py[dotenv]`).
+- `tomli` as an optional dependency for TOML support on Python < 3.11 (`pip install liteconfig_py[toml]`).
+
+### Fixed
+- Environment variable override no longer injects all system env vars when no prefix is set (#4).
+- `config['key']` no longer raises `KeyError` for keys with `None` values (#2).
+- Double underscores in env var names are now distinguishable from single underscores (#1).
+
 ## [0.2.0] - 2025-10-23
 
 ### Added
@@ -71,5 +89,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default value support for missing keys
 - Clean and intuitive API
 
+[0.3.0]: https://github.com/TickTockBent/liteconfig_py/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/TickTockBent/liteconfig_py/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/TickTockBent/liteconfig_py/releases/tag/v0.1.0

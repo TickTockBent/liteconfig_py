@@ -328,7 +328,7 @@ config = Config('config.json', load_dotenv=True)
 **Check:**
 1. Environment variable precedence (existing env vars are not overridden by .env)
 2. Correct .env file path
-3. Naming conventions (APP_DATABASE_HOST -> app.database.host)
+3. Naming conventions: single underscore `_` is the nesting separator (`APP_PORT` -> `app.port`), double underscore `__` produces a literal underscore (`MY__KEY` -> `my_key`)
 
 ### Issue: Validation errors in production
 

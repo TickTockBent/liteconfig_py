@@ -33,7 +33,10 @@ pip install liteconfig_py
 * Optional dependencies:
 
 ```bash
-pip install PyYAML toml
+pip install PyYAML               # YAML support
+pip install tomli                 # TOML support (Python < 3.11; built-in on 3.11+)
+pip install python-dotenv         # Enhanced .env file parsing
+pip install liteconfig_py[all]    # Everything including Pydantic validation
 ```
 
 ## Usage
@@ -65,14 +68,17 @@ print(config.get('database.host'))  # 'localhost'
 
 ### Overriding Values with Environment Variables
 
-Environment variables automatically override file values if they match the configuration keys:
+Environment variables automatically override file values using this naming convention:
+
+| Convention | Meaning | Example |
+|---|---|---|
+| Single underscore `_` | Nesting separator (`.`) | `DATABASE_HOST` -> `database.host` |
+| Double underscore `__` | Literal underscore | `MY__KEY` -> `my_key` |
 
 ```bash
 export DATABASE_HOST='db.production.com'
 export APP_PORT=80
 ```
-
-**Python script:**
 
 ```python
 from liteconfig_py import Config
@@ -82,6 +88,8 @@ config = Config('config.yml')
 print(config.get('database.host'))  # 'db.production.com'
 print(config.get('app.port'))  # 80
 ```
+
+**Note:** When no `env_prefix` is set, only environment variables matching keys that already exist in your config file are applied. This prevents system variables like `PATH` or `HOME` from polluting your config. Use `env_prefix` to allow creating new keys from env vars.
 
 ### Advanced Usage
 
@@ -144,6 +152,8 @@ APP_PORT=8080
 ```
 
 **Note:** Existing environment variables take precedence over .env file values.
+
+If `python-dotenv` is installed, it is used automatically for richer `.env` parsing (multiline values, variable interpolation, `export` prefixes). Otherwise a built-in parser handles basic `KEY=VALUE` syntax.
 
 #### Schema Validation with Pydantic
 

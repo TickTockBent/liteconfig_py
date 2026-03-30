@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "liteconfig_py"
-version = "0.2.0"
+version = "0.3.0"
 description = "A minimal, flexible Python configuration loader with environment variable support"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -26,16 +26,18 @@ classifiers = [
 
 [project.optional-dependencies]
 yaml = ["PyYAML"]
-toml = ["toml"]
+toml = ["tomli>=1.0; python_version < '3.11'"]
+dotenv = ["python-dotenv>=0.19"]
 validation = ["pydantic>=2.0"]
-all = ["PyYAML", "toml", "pydantic>=2.0"]
+all = ["PyYAML", "tomli>=1.0; python_version < '3.11'", "python-dotenv>=0.19", "pydantic>=2.0"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "mypy>=1.0",
     "flake8>=6.0",
     "PyYAML",
-    "toml",
+    "tomli>=1.0; python_version < '3.11'",
+    "python-dotenv>=0.19",
     "pydantic>=2.0",
 ]
 
