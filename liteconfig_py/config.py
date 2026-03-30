@@ -7,6 +7,9 @@ import importlib.util
 from typing import Any, Dict, Optional
 
 
+_MISSING = object()
+
+
 class Config:
     """
     A simple configuration manager that loads from YAML, JSON, or TOML files
@@ -49,6 +52,10 @@ class Config:
         """
         Load environment variables from a .env file.
 
+        Uses python-dotenv if available (supports multiline values, variable
+        interpolation, export prefixes). Falls back to a built-in parser for
+        basic KEY=VALUE format.
+
         Args:
             dotenv_path: Path to .env file. If None, looks for .env in current directory.
         """
@@ -59,6 +66,16 @@ class Config:
             # Don't raise error if .env doesn't exist, just skip it
             return
 
+        # Use python-dotenv if available
+        if importlib.util.find_spec("dotenv") is not None:
+            try:
+                from dotenv import load_dotenv as _dotenv_load
+                _dotenv_load(dotenv_path, override=False)
+                return
+            except Exception as e:
+                raise ValueError(f"Error loading .env file: {str(e)}")
+
+        # Fall back to built-in parser
         try:
             with open(dotenv_path, 'r', encoding='utf-8') as f:
                 for line_number, line in enumerate(f, 1):
@@ -86,7 +103,7 @@ class Config:
                             os.environ[key] = value
         except (OSError, IOError) as e:
             raise ValueError(f"Error reading .env file: {str(e)}")
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             raise ValueError(f"Error parsing .env file: {str(e)}")
 
     def _load_config(self) -> None:
@@ -135,38 +152,55 @@ class Config:
     def _load_toml(self) -> None:
         """Load configuration from TOML file."""
         try:
-            # Check if toml is available
-            if importlib.util.find_spec("toml") is None:
-                raise ImportError("toml is required for TOML configuration files. "
-                                 "Install it with: pip install toml")
-            
-            import toml
-            with open(self.config_file, 'r') as f:
-                self.config_data = toml.load(f)
+            import sys
+            if sys.version_info >= (3, 11):
+                import tomllib
+            else:  # pragma: no cover
+                if importlib.util.find_spec("tomli") is None:
+                    raise ImportError(
+                        "tomli is required for TOML configuration files on Python < 3.11. "
+                        "Install it with: pip install tomli"
+                    )
+                import tomli as tomllib
+            with open(self.config_file, 'rb') as f:
+                self.config_data = tomllib.load(f)
         except ImportError as e:
             raise e
         except Exception as e:
             raise ValueError(f"Failed to parse TOML file: {str(e)}")
 
     def _apply_env_overrides(self) -> None:
-        """Override configuration values with matching environment variables."""
+        """
+        Override configuration values with matching environment variables.
+
+        Underscore convention:
+            - Single underscore (_) is the nesting separator: DATABASE_HOST -> database.host
+            - Double underscore (__) produces a literal underscore: MY__KEY -> my_key
+
+        When no env_prefix is set, only keys that already exist in the loaded
+        configuration are overridden. This prevents system variables (PATH, HOME,
+        etc.) from polluting the config tree. Set an env_prefix to allow creating
+        new keys from environment variables.
+        """
         for env_name, env_value in os.environ.items():
             if self.env_prefix and not env_name.startswith(self.env_prefix):
                 continue
-                
+
             # Remove prefix if it exists
             if self.env_prefix:
                 config_key = env_name[len(self.env_prefix):]
             else:
                 config_key = env_name
-                
+
             # Convert environment variable name to configuration key path
-            # e.g., DATABASE_HOST -> database.host
-            config_path = config_key.lower().replace('__', '.').replace('_', '.')
-            
-            # If the environment value exists and the configuration key exists,
-            # override the value
+            # Double underscore -> literal underscore, single underscore -> dot (nesting)
+            config_path = config_key.lower().replace('__', '\x00').replace('_', '.').replace('\x00', '_')
+
             if config_path:
+                # When no prefix is set, only override keys that already exist
+                if not self.env_prefix and not self._key_exists(config_path):
+                    continue
+
                 # Try to convert the environment value to appropriate Python type
                 try:
                     # Try to parse as JSON first (for booleans, numbers, lists, etc.)
@@ -174,7 +208,7 @@ class Config:
                 except json.JSONDecodeError:
                     # If not valid JSON, keep as string
                     parsed_value = env_value
-                    
+
                 # Set the value in the config
                 self._set_nested_value(config_path, parsed_value)
 
@@ -192,6 +226,17 @@ class Config:
         
         # Set the final value
         current[keys[-1]] = value
+
+    def _key_exists(self, key_path: str) -> bool:
+        """Check whether a key path exists in the configuration, regardless of value."""
+        keys = key_path.split('.')
+        current = self.config_data
+        for key in keys:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                return False
+        return True
 
     def get(self, key_path: str, default: Any = None) -> Any:
         """
@@ -234,13 +279,13 @@ class Config:
             key_path (str): The key path in dot notation, e.g., 'database.host'
 
         Returns:
-            The configuration value
+            The configuration value (including None if the key exists with a None value)
 
         Raises:
             KeyError: If the key doesn't exist
         """
-        value = self.get(key_path)
-        if value is None:
+        value = self.get(key_path, default=_MISSING)
+        if value is _MISSING:
             raise KeyError(f"Configuration key not found: {key_path}")
         return value
 
